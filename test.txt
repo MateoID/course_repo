@@ -1,1 +1,1 @@
-Primer commit desde RStudio.
+Segundo commit desde RStudio, pero habiendo ubicado el repositorio en la carpeta donde espero trabajar durante el semestre.
