@@ -1,0 +1,150 @@
+---
+title: "Introducción"
+output: html_notebook
+---
+
+```{r}
+#install.packages("pacman")
+library(pacman)
+
+p_load(rio, # import/export data
+       tidyverse, # tidy-data
+       skimr, # summary data
+       visdat, # visualizing missing data
+       corrplot, # Correlation Plots 
+       stargazer) # tables/output to TEX. 
+```
+```{r}
+df <- import("https://github.com/ignaciomsarmiento/datasets/blob/main/GEIH_sample1.Rds?raw=true")
+db <- as_tibble(df)
+skim(db) %>% head()
+```
+```{r}
+summary(db$y_salary_m)
+```
+```{r}
+des_vars <- c("y_salary_m", "sex", "age")
+stargazer(df[des_vars], type="text")
+```
+
+
+```{r}
+ggplot(data = db, 
+       mapping = aes(x = age , y = y_ingLab_m , group=as.factor(formal) , color=as.factor(formal))) +
+  geom_point(size = 0.5)
+```
+```{r}
+ p <- ggplot(data=db) + 
+     geom_histogram(mapping = aes(x=y_ingLab_m , group=as.factor(sex) , fill=as.factor(sex)))
+p
+```
+```{r}
+p + scale_fill_manual(values = c("0"="red" , "1"="blue") , label = c("0"="Hombre" , "1"="Mujer") , name = "Sexo")
+```
+```{r}
+box_plot <- ggplot(data=db , mapping = aes(as.factor(estrato1) , totalHoursWorked)) + 
+            geom_boxplot() 
+box_plot <- box_plot + geom_point(aes(colour=as.factor(sex))) +
+            scale_color_manual(values = c("0"="red" , "1"="blue") , label = c("0"="Hombre" , "1"="Mujer") , name = "Sexo") 
+
+box_plot + theme_test()
+```
+Uso de skim() para generar un data frame informativo sobre las cada variable (skim_variable) y la cantidad de valores faltantes (n_missing).
+```{r}
+db_miss <- skim(db) %>% select(skim_variable, n_missing)
+Nobs <- nrow(db) 
+db_miss<- db_miss %>% 
+  mutate(p_missing = n_missing/Nobs) %>% 
+  arrange(-n_missing) %>% 
+filter(n_missing != 0)
+head(db_miss) 
+```
+Diferentes formas de visualizar el volumen de datos faltantes...
+```{r}
+ggplot(db_miss, aes(x = reorder(skim_variable, +p_missing) , y =  p_missing)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "black") +
+  coord_flip() +
+  labs(title = "N Missing Per Variable", x = "Var Name", y = "Missings")+ 
+  theme(axis.text = element_text(size = 5))
+```
+```{r}
+db <- db %>% select( directorio, secuencia_p, orden, estrato1, sex, age, ocu, oficio, orden, totalHoursWorked, dsi, ie , formal, informal, sizeFirm , regSalud, maxEducLevel, ingtot, ingtotes,ingtotob, y_salary_m, y_total_m)
+vis_dat(db)
+```
+```{r}
+vis_miss(db)
+```
+there are 3 common ways to deal with missing data:
+- The complete data method: just drop observations with missing data.
+- The dummy variable method: enter a 0 for the missing information and include an additional dummy (indicator) variable that indicates “missingness”.
+- Imputation: where the missing covariate is estimated based on the other available data (predicción a partir de estimadores calculados con base en MCO).
+
+A continuación, algunos métodos de imputación:
+
+1. Aplicación de la moda a los valores faltantes:
+```{r}
+mode_y <- as.numeric(names(sort(table(db$y_salary_m), decreasing = TRUE)[1]))
+
+# Imputing the missing value. 
+db <- db  %>%
+  mutate(y_salary_m = ifelse(is.na(y_salary_m) == TRUE, mode_y, y_salary_m))
+
+# total income in millions
+db <- db  %>%
+  mutate(ingtot =ingtot/1000000)
+```
+2. Aplicación de la media a los valores faltantes: 
+```{r}
+db = db %>% 
+     group_by(directorio) %>% 
+     mutate(mean_y_total_m = mean(y_total_m,na.rm=T))
+
+# Imputing the missing value. 
+db = db %>%
+     mutate(y_total_m = ifelse(test = is.na(y_total_m)==T,
+                               yes = mean_y_total_m,
+                               no = y_total_m))
+```
+3. Aplicación de la mediana a los valores faltantes:
+```{r}
+db <- db  %>%
+  mutate(ingtot = ifelse(is.na(ingtot) == TRUE, median(db$ingtot, na.rm = TRUE) , ingtot))
+
+db = db %>% 
+     group_by(directorio) %>% 
+     mutate(mean_y_total_m = median(y_total_m,na.rm=T))
+
+# Imputing the missing value.
+db = db %>%
+     mutate(y_total_m = ifelse(test = is.na(y_total_m)==T,
+                               yes = mean_y_total_m,
+                               no = y_total_m))
+```
+4. Aplicación de predicciones con base en estimadores de regresión lineal:
+```{r}
+db_train <- db %>% filter(!is.na(maxEducLevel))
+
+db$maxEducLevel<- factor(db$maxEducLevel)
+
+dummy_maxEducLevel <- as.data.frame(model.matrix(~ maxEducLevel - 1, data = db_train))
+db_train <- db_train %>% cbind(dummy_maxEducLevel)
+
+linear_imput_model <- lm(y_salary_m ~ ingtot + sex + maxEducLevel3 + maxEducLevel4 + maxEducLevel5 + maxEducLevel6 + maxEducLevel7, data = db_train)
+
+summary(linear_imput_model)
+```
+```{r}
+db <- db %>% filter(!is.na(maxEducLevel))
+
+db <- db %>% cbind(dummy_maxEducLevel)
+
+db$predicted_y <- predict(linear_imput_model, newdata = db)
+
+db <- db %>%  mutate(y_salary_m = ifelse(is.na(y_salary_m) == TRUE, predicted_y , y_salary_m))
+
+db <-  db %>% select(- maxEducLevel1, - maxEducLevel2, - maxEducLevel3, - maxEducLevel4, - maxEducLevel5, - maxEducLevel6, - maxEducLevel7)
+
+db %>% select(y_salary_m, predicted_y) %>% tail() 
+
+```
+
