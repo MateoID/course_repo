@@ -1,0 +1,78 @@
+---
+title: "Cálculo de estimadores"
+output: html_document
+date: "2025-01-25"
+---
+
+```{r setup, include=FALSE}
+library(pacman)
+p_load("tidyverse","stargazer")
+```
+```{r}
+nlsy <- read_csv('https://raw.githubusercontent.com/ignaciomsarmiento/datasets/main/nlsy97.csv')
+
+#Housekeeping
+nlsy <- nlsy  %>%   drop_na(educ) #dropea los valores faltantes (NA)
+```
+```{r}
+reg1<- lm(lnw_2016 ~ educ, data = nlsy)
+     
+stargazer(reg1,type="text") #Similar en stata: outreg2 
+```
+Uso de coeficientes estimados para predecir y, dado x (ej. 16 años de experiencia):
+```{r}
+reg1$coef
+     
+reg1$coef[1]
+
+# Predicción de y: ln(w)
+reg1$coef[1]+reg1$coef[2]*16
+
+# Exponencial de ln(w) para predecir w
+exp(reg1$coef[1]+reg1$coef[2]*16)
+```
+```{r}
+#Polinomios de educación
+nlsy <- nlsy  %>% mutate(educ2=educ^2,
+                         educ3=educ^3,
+                         educ4=educ^4,
+                         educ5=educ^5,
+                         educ6=educ^6,
+                         educ7=educ^7,
+                         educ8=educ^8
+                        )
+
+reg2<- lm(lnw_2016~educ+ educ2 + educ3 + educ4 + educ5 + educ6 + educ7 + 
+    educ8 ,   data = nlsy)
+
+#"predict" simplifica hacer la operación X\hat{\beta}
+nlsy <- nlsy  %>% mutate(yhat=predict(reg2)) #con la función mutate
+```
+```{r}
+summ <- nlsy %>%  
+  group_by(
+    educ, educ2, educ3, educ4, educ5, 
+    educ6, educ7, educ8
+  ) %>%  
+  summarize(
+    mean_y = mean(lnw_2016),
+    yhat_reg = mean(yhat), .groups="drop"
+  )
+```
+```{r}
+ggplot(summ) + 
+  geom_point(
+    aes(x = educ, y = mean_y),
+    color = "blue", size = 2
+  ) + 
+  geom_line(
+    aes(x = educ, y = yhat_reg), 
+    color = "green", linewidth = 1.5
+  ) + 
+  labs(
+    title = "ln Wages by Education in the NLSY",
+    x = "Years of Schooling",
+    y = "ln Wages"
+  ) +
+  theme_bw()
+```

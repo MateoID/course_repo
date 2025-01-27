@@ -1,0 +1,55 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+require("pacman")
+
+p_load("tidyverse","stargazer")
+```
+```{r}
+dta<-tibble(lnwage=c(5,10,12.50),educ=c(8,12,16))
+```
+```{r}
+ggplot(dta,aes(x=educ,y=lnwage)) +
+  geom_point(alpha=1,size=4) +
+  theme_bw()  +
+  xlab("Education") +
+  ylab("Ln(Wage)") +
+  xlim(0,20) +
+  ylim(-5,20) +
+  theme(legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(size=20)
+  )
+```
+```{r}
+# dependant variable as a one-column matrix, i.e., a vector
+y<-matrix(dta$lnwage,ncol=1)
+
+# the design matrix
+X<-model.matrix(~educ,data=dta)
+
+X
+```
+
+
+```{r}
+beta_coef<-solve(t(X)%*%X)%*%t(X)%*%y
+
+beta_coef
+```
+```{r}
+reg_with_lm<- lm(lnwage~educ,data=dta)
+reg_with_lm
+```
+```{r}
+# Esta es la función específica que corre la regresión partiendo de matrices ya existentes.
+lm.fit(X,y)$coefficients
+```
+```{r}
+
+```
