@@ -32,24 +32,51 @@ y<-matrix(dta$lnwage,ncol=1)
 
 # the design matrix
 X<-model.matrix(~educ,data=dta)
-
-X
 ```
 
-
+$$
+\hat{\beta} = (X'X)^{-1} X'y
+$$
+Método 1: cálculo de coeficientes a través de la inversa de X'X, la cual será de dimensión k*k. Con grándes volúmenes de datos la inversión de matrices es bastante costosa.
 ```{r}
 beta_coef<-solve(t(X)%*%X)%*%t(X)%*%y
 
 beta_coef
 ```
+Método 2: lm() es el método de cálculo de coeficientes principal de R. Resulta costoso computacionalmente, ya que almacena un dataframe con los mismos datos que la tabla incluida para el argumento "data=".
 ```{r}
 reg_with_lm<- lm(lnwage~educ,data=dta)
 reg_with_lm
 ```
+lm.fit() es la función específica que R usa para realizar la regresión lineal.
 ```{r}
-# Esta es la función específica que corre la regresión partiendo de matrices ya existentes.
 lm.fit(X,y)$coefficients
 ```
-```{r}
+lm() parte de la expresieste punto para descomponer X'X en las matrices Q y R asi:
+$$
+X'X\hat{\beta} = X'y \\
+(R'Q'QR)\hat{\beta} = R'Q'y \\
+(R'R)\hat{\beta} = R'Q'y \\
+R\hat{\beta} = Q'y
+$$
 
+```{r}
+QR<-qr(X)
+R<- qr.R(QR)
+R
+```
+```{r}
+Q<- qr.Q(QR)
+Q
+```
+```{r}
+t(Q)%*%y
+```
+```{r}
+beta1 <- -5.303301 / -5.656854
+beta1
+```
+```{r}
+beta0 <- (-15.877132 - (-20.784610*beta1)) / -1.732051
+beta0
 ```
