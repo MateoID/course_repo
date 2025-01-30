@@ -1,6 +1,6 @@
 ---
 title: "Cálculo de estimadores"
-output: html_document
+output: null
 date: "2025-01-25"
 ---
 

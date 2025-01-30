@@ -1,0 +1,186 @@
+---
+title: "Tratamiento de observaciones influyentes y outliers"
+output: null
+---
+
+
+```{r}
+library(gridExtra) 
+library(rio)
+library(tidyverse)
+library(skimr)
+library(corrplot)
+library(stargazer)
+library(MASS)
+library(pacman)  
+```
+```{r}
+db <- import("https://github.com/ignaciomsarmiento/datasets/blob/main/GEIH_sample1.Rds?raw=true")
+db <- as_tibble(db) %>% rename(gender=sex) 
+```
+```{r}
+db_of<- db %>% 
+      group_by(oficio, gender)  %>% 
+      summarise(ofic_ingLab= mean(y_ingLab_m, na.rm=T), .groups="drop") %>%
+      mutate(ofic_ingLab= ofic_ingLab/1000000)
+
+db_of  %>% dplyr:: select(oficio, gender, ofic_ingLab) %>% head(4)
+```
+```{r}
+db_int <- db %>% inner_join(db_of, by=c("oficio", "gender"))
+
+summary(db_int$totalHoursWorked)
+```
+```{r}
+db_int <- db_int %>%
+  mutate(flag = ifelse(age <= 18, 1, 0))
+
+#  total number of children per household
+
+db_int <- db_int %>%
+  group_by(directorio, secuencia_p) %>%
+  mutate(nmenores = sum(flag)) %>%
+  dplyr::select(-flag) %>% 
+  ungroup()
+
+db_int %>% dplyr:: select(directorio, secuencia_p, age , nmenores ) %>% tail()
+```
+```{r}
+db_int <- db_int %>%
+  mutate(H_Head = ifelse(p6050== 1, 1, 0))
+```
+```{r}
+db_int= db_int %>% filter(totalHoursWorked>0)
+```
+```{r}
+features<- c("ofic_ingLab", "nmenores",  "H_Head",  "age",  "gender" )
+
+db_int <- db_int %>% drop_na(any_of(features))
+```
+Training data set
+```{r}
+db_int_training <- db_int %>% slice(1:1000)
+
+db_int_test <- db_int %>% slice(1001:1501)
+```
+
+
+```{r}
+## Regression
+linear_model<- lm(totalHoursWorked ~ ofic_ingLab + nmenores  + 
+                    nmenores*gender + H_Head + age + gender, data=db_int_training)
+
+summary(linear_model)
+```
+```{r}
+## leverage 
+db_int_leverage <- db_int_training %>% mutate(leverage=hatvalues(linear_model))
+
+## residuals
+db_int_leverage <- db_int_leverage %>% mutate(residuals=linear_model$residuals)
+```
+```{r}
+N <- nrow(db_int_leverage)
+
+db_int_leverage$id <- seq(1 , N)
+
+a <- ggplot(db_int_leverage , aes(y = leverage , x = id , color=ofic_ingLab, shape=as.factor(gender))) +
+  geom_point() + # add points
+  theme_bw() + #black and white theme
+  labs(x = "Observations",  
+       y = "Leverage",
+       title = "") # labels
+
+
+b <- ggplot(db_int_leverage , aes(y=leverage , x=residuals)) +
+  geom_point() + # add points
+  theme_bw() + #black and white theme
+  labs(x = "Residuals",  
+       y = "Leverage",
+       title = "") # labels
+
+
+# Arrange the ggplot2 plots side by side using grid.arrange()
+grid.arrange(a, b, ncol = 2)
+```
+Influential observations have a leverage bigger that 2 or 3 times the mean leverage.
+```{r}
+p <- mean(db_int_leverage$leverage)
+
+cutt <- 3*p
+cutt
+```
+```{r}
+db_int_leverage <- db_int_leverage %>% 
+  dplyr:: filter(leverage <= cutt)
+
+# re run the model
+linear_model2 <- lm(totalHoursWorked ~ ofic_ingLab + nmenores  + nmenores*gender + H_Head + age + gender, data=db_int_leverage)
+
+
+stargazer(linear_model, linear_model2, type="text",
+          covariate.labels=c("Mean Ocu Income","N under 18","Male",
+                             "Hausehold Head","Age", "N under 18 x Male" ))
+```
+```{r}
+db_int_influential <- db_int_training %>% mutate(leverage=hatvalues(linear_model))
+
+## residuals
+db_int_influential <- db_int_influential %>% mutate(residuals=linear_model$residuals)
+
+influential <- db_int_influential %>% 
+      filter(leverage > cutt) %>%
+      dplyr:: select(totalHoursWorked, ofic_ingLab, nmenores, H_Head, age, gender)
+```
+Observaciones con elevado "laverage".
+```{r}
+des_vars <- c("totalHoursWorked", "ofic_ingLab", "nmenores", "H_Head", "age", "gender")
+
+influential <- as.data.frame(influential)
+
+stargazer(influential[des_vars], type="text")
+```
+Observaciones con laverage menor a 3.
+```{r}
+bf <- as.data.frame(db_int_influential %>% 
+      filter(leverage <= cutt ))
+stargazer(bf[des_vars], type="text")
+```
+Tratamiento de outliers: cualquier valor que haya sido generado por un proceso diferente al que interesa a la investigación. 
+```{r}
+db_int3 <- db_int_training %>% mutate(m1_std_residuals = studres(linear_model))
+
+db_int3 <- db_int3 %>% filter(m1_std_residuals < 2 & m1_std_residuals > -2)
+
+linear_model3<- lm(
+  totalHoursWorked ~ ofic_ingLab + nmenores  +  nmenores*gender
+                                 + H_Head + age + gender,
+  data=db_int3)
+
+stargazer(linear_model, linear_model2, linear_model3, type="text",
+          covariate.labels=c("Mean Ocu Income","N under 18","Male",
+                             "Hausehold Head","Age", "N under 18 x Male" ))
+```
+```{r}
+predicciones_modelo1 <- predict(linear_model, newdata = db_int_test)
+predicciones_modelo2 <- predict(linear_model2, newdata = db_int_test)
+predicciones_modelo3 <- predict(linear_model3, newdata = db_int_test)
+
+#install.packages("Metrics")
+#library(Metrics)
+
+# Calcular el MSE para cada modelo
+mse_modelo1 <- mse(db_int_test$totalHoursWorked, predicciones_modelo1)
+mse_modelo2 <- mse(db_int_test$totalHoursWorked, predicciones_modelo2)
+mse_modelo3 <- mse(db_int_test$totalHoursWorked, predicciones_modelo3)
+
+# Imprimir los resultados
+print(paste("MSE Modelo 1:", mse_modelo1))
+print(paste("MSE Modelo 2:", mse_modelo2))
+print(paste("MSE Modelo 3:", mse_modelo3))
+```
+```{r}
+promedio_horas <- mean(db_int_test$totalHoursWorked)
+promedio_horas
+```
+
