@@ -1,0 +1,39 @@
+---
+title: "web scraping"
+output: null
+---
+```{r}
+require(pacman)
+
+p_load(tidyverse, rvest)
+```
+```{r}
+my_url = "https://es.wikipedia.org/wiki/Copa_Mundial_de_F%C3%BAtbol"
+browseURL(my_url)
+```
+<p>: Párrafos
+<head>: Encabezado de la pagina
+<body>: Cuerpo de la pagina
+<h1>, <h2>,...,<hi>: Encabezados, Secciones
+<a>: links
+<li>: Ítem en una lista
+<table>: Tablas
+<td>: Una celda de datos en una tabla
+<div>: División. Sirve para crear secciones o agrupar contenidos.
+<script>: Se utiliza para insertar o hacer referencia a un script
+```{r}
+my_html <- read_html(my_url)
+my_html %>% html_elements("h2") %>% html_text()
+```
+Selección de elemento html usando xpath.
+```{r}
+my_html %>% html_nodes(xpath='//*[@id="Historia"]') %>% html_text()
+```
+```{r}
+my_table <- my_html %>% html_nodes(xpath='//*[@id="mw-content-text"]/div[1]/table[2]') %>% html_table()
+as.data.frame(my_table)
+```
+```{r}
+my_html %>% html_nodes("a") %>% html_attr("title")
+my_html %>% html_nodes("a") %>% html_attr("href")
+```
