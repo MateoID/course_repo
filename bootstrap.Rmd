@@ -1,0 +1,68 @@
+---
+title: "Bootstrap"
+output: null
+date: "2025-02-18"
+---
+
+```{r}
+library(tidyverse)
+library(stargazer)
+```
+Ajuste de regresión usando lm() donde la varianza del beta se asume constante (supuesto de homoscedasticidad).
+```{r}
+gas<-read.csv("https://raw.githubusercontent.com/ignaciomsarmiento/datasets/main/gas.csv",header=T)
+
+mod1<- lm(consumption~price+income,gas)
+mod2<- lm(consumption~price+I(price^2)+income+price:income,gas)
+stargazer(mod1, mod2, type="text", omit.stat=c("ser","f","adj.rsq"))
+```
+Ni la media de los residuales es 0, ni la varianza de los es constante.
+```{r}
+mean(mod1$residuals)
+```
+```{r}
+plot(mod1$residuals)
+```
+Se importa el paquete boot para llevar a cabo remuestreos con bootstrap
+
+La función boot() recibe tres argumentos:
+1. Base de datos
+2. Función que a su vez debe tomar dos argumentos: la base de datos y su índice.
+3. Cantidad de muestras sintéticas generadas por el método bootstrap. Excelente: 10.000, Muy bien: 1000, Suficiente ≥ 100.
+```{r}
+library(boot)
+
+eta_fn<-function(data,index){
+  
+  coef(lm(consumption~price+income, data = data, subset = index))[2] #returns the second coefficient of the linear regression
+}
+
+boot(gas, eta_fn, R = 1000)
+```
+```{r}
+eta_fn2<-function(data,index){
+  coef(lm(consumption~price+I(price^2)+income+price:income, data = data, subset = index))[2]
+}
+
+boot(gas, eta_fn2, R = 1000)
+```
+Calculo del MSE usando bootstrap para comparar dos modelos diferentes.
+```{r}
+eta_fn3<-function(data,index){
+  
+  x <- residuals(lm(consumption~price+I(price^2)+income+price:income, data = data, subset = index))
+  return (mean(x^2))
+}
+
+boot(gas, eta_fn3, R = 100)
+```
+```{r}
+eta_fn4<-function(data,index){
+  x <- residuals(lm(consumption~price+income, data = data, subset = index))
+  return (mean(x^2))
+}
+
+boot(gas, eta_fn4, R = 100)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
