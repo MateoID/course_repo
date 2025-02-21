@@ -1,0 +1,317 @@
+---
+title: "Cross Validation"
+output: null
+date: "2025-02-21"
+---
+
+```{r}
+library(tidyverse)
+library(caret)
+library(skimr)
+library(stargazer)
+library(rio)
+```
+Limpieza de datos
+```{r}
+db <- readRDS('sample_GEIH.rds')
+
+db <- as_tibble(db) %>% rename(gender=sex) 
+
+db <- db %>%
+  mutate(flag = ifelse(age <= 6, 1, 0))
+
+db <- db %>%
+  group_by(directorio, secuencia_p) %>%
+  mutate(nmenores = sum(flag)) %>%
+  select(-flag) %>% 
+  ungroup()
+
+db <- db  %>%
+  mutate(maxEducLevel = ifelse(is.na(maxEducLevel) == TRUE, 1, maxEducLevel))
+
+db <- db  %>%
+  mutate(ingtot = ingtot/1000000)
+
+db <- db %>% 
+     group_by(directorio, secuencia_p) %>% 
+     mutate(mean_ingtot = mean(ingtot, na.rm = TRUE)) %>% 
+     ungroup()
+
+db <- db %>% 
+     mutate(ingtot = ifelse(is.na(ingtot) == TRUE, 
+                            yes = mean_ingtot, 
+                            no = ingtot)) 
+
+db <- db %>%
+  mutate(H_Head = ifelse(p6050 == 1, 1, 0))
+
+db <- db %>%
+  mutate(Head_Female = H_Head*(1-gender))
+
+db <- db %>% filter(totalHoursWorked>0)
+
+des_vars <- c("totalHoursWorked", "nmenores", "ingtot", "H_Head", "Head_Female", "age")
+
+db <- db %>% 
+     group_by(estrato1) %>% 
+     mutate(mean_ingtot = mean(ingtot, na.rm=TRUE)) %>% 
+     ungroup()
+
+
+db <- db %>% 
+     mutate(ingtot = ifelse(ingtot == 0, mean_ingtot, ingtot))
+
+db <- db %>%
+      mutate(log_ingtot = log(ingtot))
+
+db<- db %>% 
+  select(totalHoursWorked, log_ingtot, gender, age, nmenores, H_Head, Head_Female, maxEducLevel)
+
+variables_categoricas <- c("gender", "H_Head", "Head_Female", "maxEducLevel")
+
+db<- db %>% mutate_at(variables_categoricas, as.factor)
+```
+Uso de caret para los métodos de validación.
+```{r}
+set.seed(69205)
+
+# Validation set con 20% datos de prueba y 80% datos de entrenamiento 
+inTrain <- createDataPartition( # Método de caret para establecer validation set aleatoriamente elegido
+  y = db$totalHoursWorked,  # Variable explicada
+  p = .80, # Porcentaje de datos para entrenamiento
+  list = FALSE
+)
+
+training <- db %>% 
+  filter(row_number() %in% inTrain)
+
+testing  <- db %>% 
+  filter(!row_number() %in% inTrain)
+```
+Entrenamiento y prueba del primer modelo.
+RMSE permite calcular la raíz cuadrada del error cuadrático medio para sus predicciones.
+```{r}
+form_1 <- totalHoursWorked ~ log_ingtot + age + gender 
+
+modelo1a <- lm(form_1, data = training)
+
+predictions1 <- predict(modelo1a, testing)
+
+score1a <- RMSE(predictions1, testing$totalHoursWorked)
+```
+Entrenamiento y prueba del segundo modelo.
+```{r}
+form_2 <- totalHoursWorked ~ log_ingtot + age + gender + maxEducLevel + nmenores
+
+modelo2a <- lm(form_2, data = training)
+
+predictions2 <- predict(modelo2a, testing)
+
+score2a <- RMSE(predictions2, testing$totalHoursWorked)
+```
+Entrenamiento y prueba del tercer modelo.
+```{r}
+form_3 <- totalHoursWorked ~ log_ingtot + age + gender + maxEducLevel + nmenores + H_Head + Head_Female
+
+modelo3a <- lm(form_3, data = training)
+
+predictions3 <- predict(modelo3a, testing)
+
+score3a <- RMSE(predictions3, testing$totalHoursWorked)
+```
+Entrenamiento y prueba del cuarto modelo.
+```{r}
+form_4 <- totalHoursWorked ~ log_ingtot + poly(age,3,raw=TRUE) + gender + poly(age,3,raw=TRUE):gender + maxEducLevel + poly(age,3,raw=TRUE):maxEducLevel + nmenores + poly(age,3,raw=TRUE):nmenores + H_Head + poly(age,3,raw=TRUE):H_Head + Head_Female + poly(age,3,raw=TRUE):Head_Female 
+
+modelo4a <- lm(form_4, data = training)
+
+predictions4 <- predict(modelo4a, testing)
+
+score4a <- RMSE(predictions4, testing$totalHoursWorked)
+```
+K-fold Cross Validation
+Método "trainControl" para elegir método de validación y número de folds
+```{r}
+ctrl <- trainControl(method = "cv", # K-fold Cross Validation 
+                     number = 5) # Número de folds
+```
+Método "train" para ajustar un modelo con base en varios argumentos
+Entrenamiento y prueba del primer modelo
+```{r}
+set.seed(69205)  
+
+modelo1b <- train(form_1,  # Especificación del modelo
+                  data = db,  # Datos
+                  method = 'lm',  # Método para ajuste de modelo 
+                  trControl= ctrl)  # Tipo de validación 
+modelo1b
+```
+```{r}
+modelo1b$resample
+```
+```{r}
+score1b <- mean(modelo1b$resample$RMSE)
+```
+Entrenamiento y prueba del segundo modelo
+```{r}
+set.seed(69205)
+
+modelo2b <- train(form_2,
+                  data = db,
+                  method = 'lm',
+                  metric= "RMSE",
+                  trControl= ctrl)
+
+score2b <- mean(modelo2b$resample$RMSE)
+```
+Entrenamiento y prueba del tercer modelo
+```{r}
+set.seed(69205)
+
+modelo3b <- train(form_3,
+                  data = db,
+                  method = 'lm', 
+                  trControl= ctrl)
+
+score3b <- mean(modelo3b$resample$RMSE)
+```
+Entrenamiento y prueba del cuarto modelo
+```{r}
+set.seed(69205)
+
+modelo4b <- train(form_4,
+                  data = db,
+                  method = 'lm', 
+                  trControl= ctrl)
+
+score4b <- mean(modelo4b$resample$RMSE)
+```
+Leave-One-Out Cross Validation (LOOCV)
+Método "trainControl" para elegir método de validación y número de folds
+```{r}
+ctrl <- trainControl(method = "LOOCV") # Con LOOCV solo se necesita un argumento
+```
+Entrenamiento y prueba del primer modelo
+```{r}
+#start_time <- Sys.time()
+
+## Get total number of observations for progress tracking
+#n_obs <- nrow(db)
+#cat("Starting LOOCV training with", n_obs, "iterations...\n")
+#
+# Train model with progress printing
+#ctrl$verboseIter <- TRUE  # Enable progress printing
+modelo1c <- train(form_1,
+                  data = db,
+                  method = 'lm', 
+                  trControl = ctrl)
+
+## Calculate and display timing
+#end_time <- Sys.time()
+#training_time <- difftime(end_time, start_time, units = "mins")
+#cat("\nLOOCV training completed in:", round(training_time, 2), "minutes\n")
+#cat("Average time per fold:", round(training_time/n_obs, 4), "minutes\n")
+
+score1c <- RMSE(modelo1c$pred$pred, db$totalHoursWorked)
+```
+Entrenamiento y prueba del segundo modelo
+```{r}
+modelo2c <- train(form_2,
+                  data = db,
+                  method = 'lm', 
+                  trControl = ctrl)
+
+score2c<-RMSE(modelo2c$pred$pred, db$totalHoursWorked)
+```
+Entrenamiento y prueba del tercer modelo
+```{r}
+#ctrl$verboseIter <- FALSE  # Disable progress printing
+start_time <- Sys.time()
+
+modelo3c <- train(form_3,
+                  data = db,
+                  method = 'lm', 
+                  trControl = ctrl)
+
+end_time <- Sys.time()
+training_time <- difftime(end_time, start_time, units = "mins")
+cat("\nLOOCV training completed in:", round(training_time, 2), "minutes\n")
+
+score3c <- RMSE(modelo3c$pred$pred, db$totalHoursWorked)
+```
+Entrenamiento y prueba del cuarto modelo
+```{r}
+modelo4c <- train(form_4,
+                  data = db,
+                  method = 'lm', 
+                  trControl = ctrl)
+
+score4c <- RMSE(modelo4c$pred$pred, db$totalHoursWorked)
+```
+Resultados finales tomando en cuenta los promedios de RMSE por modelo para cada tipo de validación
+```{r}
+scores <- data.frame(Model= c(1, 2, 3, 4),
+                    RMSE_vsa= c(score1a, score2a, score3a, score4a), 
+                    RMSE_kfold= c(score1b, score2b, score3b, score4b),
+                    RMSE_loocv= c(score1c, score2c, score3c, score4c)
+                    )
+
+print(scores)
+```
+If you closely examine the equation that relates the change in coefficients when excluding an observation with the leverage measure, you’ll find that this equation allows us to calculate the prediction error for the outcome using a model estimated without including observation𝑗:̂ 𝑗
+```{r}
+RMSE_vsa   <- c(score1a, score2a, score3a, score4a) 
+RMSE_kfold <- c(score1b, score2b, score3b, score4b)
+RMSE_loocv <- c(score1c, score2c, score3c, score4c)
+
+
+scores <- data.frame(Model= rep(c(1, 2, 3, 4),3), Approach= c(rep("Validation",4),rep("K-Fold",4),rep("LOOCV",4)), RMSE= c(RMSE_vsa, RMSE_kfold, RMSE_loocv))
+
+ggplot(scores, ) + 
+  geom_line(aes(x=Model,y=RMSE,col=Approach), size=0.5) +
+  theme_bw() 
+```
+
+$$
+\hat{\beta^{(\ -j)}} = \hat{\beta} - \frac{1}{1 - h_j} (X'X)^{-1} X_j' \hat{u}_j
+$$
+This measure is very useful for assessing the predictive performance of a linear regression model. This is exactly the LOOCV. Using the linear algebra features of R we can calculate this without running the model 𝑁 times. When the data is large, this can save us some computation time.
+
+Let's calculate this measure for the model 3, and check that the results the same:
+```{r}
+## RUN THE MODEL WITH ALL OBS
+full_model <- lm(form_3, data = db)
+
+X <- model.matrix(full_model)
+y <- model.response(model.frame(full_model))
+
+beta_hat <- full_model$coefficients
+  
+## Calculate the inverse of (X'X), call it G_inv
+G_inv <- solve(t(X)%*%X)
+
+## and 1/1-hi
+vec<- 1/(1-hatvalues(full_model))
+  
+N <- nrow(X)  # Number of observations
+LOO <- numeric(N)  # To store the errors
+
+start_time <- Sys.time()
+  # Loop over each observation
+for (i in 1:N) {
+  # get the new beta
+  new_beta<- beta_hat - vec[i] * G_inv %*% as.vector(X[i, ]) * full_model$residuals[i]
+  ## get the new error
+  new_error <- (y[i] - (X[i, ] %*% new_beta))^2
+  LOO[i] <- new_error
+  }
+  
+end_time <- Sys.time()
+training_time <- difftime(end_time, start_time, units = "mins")
+cat("\nLOOCV training completed in:", round(training_time, 2), "minutes\n")
+
+looCV_error <- mean(LOO)
+score3c_2 <- sqrt(looCV_error)
+
+print(paste(score3c, score3c_2))
+```
