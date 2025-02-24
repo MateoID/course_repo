@@ -1,0 +1,331 @@
+---
+title: "model_subseting"
+output: null
+date: "2025-02-24"
+---
+
+```{r}
+library(tidyverse)
+library(caret)
+library(leaps)
+```
+
+```{r}
+db <- readRDS('sample_GEIH.rds')
+
+db <- as_tibble(db) %>% 
+      rename(gender = sex) %>%
+      mutate(female = 1-gender, ## 1 if female
+             H_Head = ifelse(p6050 == 1, 1, 0), #Household head
+             ingtot = ingtot / 1000000) # income in mill.
+
+# creating the total number of children per household
+db <- db %>% 
+  mutate(flag = ifelse(age <= 6, 1, 0))  %>%
+  group_by(directorio, secuencia_p) %>%
+  mutate(nmenores = sum(flag)) %>%
+  select(-flag) %>% 
+  ungroup()
+
+## Imputing missing values
+
+### replace the missing values of the `maxEducLevel` variable with the most common value.
+### most common value:
+mode_edu <- as.numeric(names(sort(table(db$maxEducLevel), decreasing = TRUE)[1]))
+
+### Imputing the missing value. 
+db <- db  %>%
+  mutate(maxEducLevel = ifelse(is.na(maxEducLevel) == TRUE, mode_edu , maxEducLevel))
+
+# income
+db <- db %>% 
+     group_by(directorio, secuencia_p) %>% 
+     mutate(mean_ingtot = mean(ingtot, na.rm=TRUE)) %>% 
+     ungroup()
+
+
+db <- db %>% 
+     mutate(ingtot = ifelse(is.na(ingtot)==TRUE, mean_ingtot, ingtot)) 
+
+# impute the `estrato1` median income to those with zero income.
+### create mean income by estrato1
+db <- db %>% 
+     group_by(estrato1) %>% 
+     mutate(mean_ingtot = mean(ingtot, na.rm=TRUE)) %>% 
+     ungroup()
+
+## impute income if zero. 
+db <- db %>% 
+     mutate(ingtot = ifelse(ingtot == 0, mean_ingtot, ingtot))
+
+## create the variable 
+
+db <- db %>%
+      mutate(log_ingtot = log(ingtot))
+
+db <- db %>% filter(totalHoursWorked > 0)
+
+db <- db %>% 
+      select(totalHoursWorked, log_ingtot, female, age, nmenores, H_Head, maxEducLevel)
+
+variables_categoricas <- c("female", "H_Head", "maxEducLevel")
+
+db <- db %>% mutate_at(variables_categoricas, as.factor)
+```
+
+Aproximaciones frente a la selección de parámetros Best Subset Selection: algoritmo que ajusta todas las posibles combinaciones individuales de parámetros y para cada cantidad de variables k, selecciona la combinación que minimice el RSS o maximice R\^2.
+
+```{r}
+model_form <- totalHoursWorked ~ log_ingtot + 
+                              female +
+                              age+
+                              nmenores+
+                              H_Head+
+                              maxEducLevel+
+                              female:H_Head
+
+## run the Best Subset Selection algorithm
+
+bestsub_model <- regsubsets(model_form, ## formula
+                            data=db, ## data frame Note we are using the training sample.
+                            nvmax=11) ## Máximo número de variables que serán analizadas
+## Para ajustar todos los modelos posibles con las K variables de la base de datos, se incluye nvmax=1
+
+summary(bestsub_model)
+```
+
+Visualización de coeficientes para uno de los modelos seleccionados según la cantidad K de variables
+
+```{r}
+coef(bestsub_model, id=5)
+```
+
+Para determinar cuál es el mejor modelo entre cada uno de los K seleccionados previamente, se puede usar alguno de los métodos de validació ya vistos, en este caso K-fold CV.
+
+```{r}
+max_nvars <- bestsub_model[["np"]]-1  ## minus one because it counts the intercept.
+## Este objeto corresponde al subset generado previamente, pero el elemento "np" corresponde a la totalidad de variables contenidas en la bd.
+```
+
+```{r}
+## create the predict Function for the object regsubsets
+predict.regsubsets <- function (object , newdata , id, form, ...) {
+  mat <- model.matrix(form, newdata) ## model matrix in the test data
+  coefi <- coef(object , id=id) ## coefficient for the best model with id vars 
+  xvars <- names(coefi)  ## variables in the model
+  mat[, xvars] %*% coefi  ## prediction 
+}
+
+set.seed(308873)
+k <- 5
+n <- nrow(db)
+folds <- sample(rep(1:k, length=n))
+cv.errors <- matrix(NA, k, max_nvars, dimnames=list(NULL, paste(1:max_nvars)))
+
+for (j in 1:k) {
+  best_fit <- regsubsets(
+    model_form, 
+    data=db[folds != j, ], 
+    nvmax=max_nvars)
+  
+  for (i in 1:max_nvars) {
+     pred <- predict(best_fit, db[folds == j, ], id = i, model_form)
+     cv.errors[j, i] <- mean((db$totalHoursWorked[folds == j] - pred)^2)
+}
+}
+
+mean.cv.errors <- apply(cv.errors, 2, mean)
+mean.cv.errors
+```
+
+```{r}
+which.min(mean.cv.errors)
+```
+
+```{r}
+bestsub_model <- regsubsets(model_form, ## formula
+                            data = db, ## data frame full data
+                            nvmax = 11) ## show all the model groups
+
+names(coef(bestsub_model, id=4))
+```
+
+```{r}
+coef(bestsub_model, id=4)
+```
+
+Para la aproximación con best subset selection tuvieron que analizarse 2\^11 modelos y la cantidad de modelos por ajustar aumenta exponencialmente con el aumento de las variables, lo cual genera un alto costo computacional.
+
+Por lo tanto, métodos más eficientes son "Forward Stepwise Selection" y "Backward Stepwise Selection".
+
+Forward Stepwise Selection: algoritmo que ajusta modelos aumentando progresivamente los parámetros agregándolos al modelo con k - 1 parámetros con mejor desempeño.
+
+```{r}
+fordward_model <- regsubsets(model_form, ## fórmula
+                            data = db, ## data frame Note we are using the training sample.
+                            nvmax = 11, ## run the first 11 models
+                            method = "forward")  ## apply Forward Stepwise Selection
+
+summary(fordward_model)
+```
+
+La selección de parámetros difiere entre "Best Subset Selection" y "Forward Stepwise Selection", el primero incluye "female1:H_Head1" y el segundo "female1".
+
+```{r}
+names(coef(bestsub_model, id=6))
+```
+
+```{r}
+names(coef(fordward_model, id=6))
+```
+
+```{r}
+forward_form<-  totalHoursWorked ~log_ingtot +
+  poly(age,3,raw=TRUE) +
+  female + poly(age,3,raw=TRUE):female +
+  maxEducLevel + 
+  poly(age,3,raw=TRUE):maxEducLevel  +
+  nmenores + 
+  poly(age,3,raw=TRUE):nmenores + 
+  H_Head +  
+  poly(age,3,raw=TRUE):H_Head +
+  H_Head*female +  
+  poly(age,3,raw=TRUE):H_Head*female
+
+## To see the total number of variables. 
+fordward_model <- regsubsets(forward_form, ## formula
+                            data = db, ## data frame Note we are using the training sample.
+                            nvmax = 2, ## show only the first 3  models models
+                           method = "forward")  ## apply Forward Stepwise Selection
+
+
+max_nvars= fordward_model[["np"]]-1  ## minus one because it counts the intercept.
+max_nvars
+```
+
+```{r}
+## create the predict Function for the object regsubsets
+predict.regsubsets <- function (object , newdata , id, form, ...) {
+  mat <- model.matrix(form, newdata) ## model matrix in the test data
+  coefi <- coef(object , id=id) ## coefficient for the best model with id vars 
+  xvars <- names(coefi)  ## variables in the model
+  mat[, xvars] %*% coefi  ## prediction 
+}
+
+set.seed(308873)
+
+k <- 5
+n <- nrow(db)
+folds <- sample(rep(1:k, length=n))
+cv.errors_forward <- matrix(NA, k, max_nvars, dimnames=list(NULL, paste(1:max_nvars)))
+
+for (j in 1:k) {
+  forward_fit <- regsubsets(
+    forward_form, 
+    data=db[folds != j, ], 
+    nvmax=max_nvars,
+    method="forward") ## remember to use the method forward.
+  
+  for (i in 1:max_nvars) {
+     pred <- predict(forward_fit, db[folds == j, ], id = i, forward_form)
+     cv.errors_forward[j, i] <- mean((db$totalHoursWorked[folds == j] - pred)^2)
+}
+}
+
+mean.cv.errors_forward <- apply(cv.errors_forward, 2, mean)
+mean.cv.errors_forward
+```
+
+```{r}
+which.min(mean.cv.errors_forward)[[1]]
+```
+
+```{r}
+bestsub_model_forward <- regsubsets(forward_form, ## formula
+                            data=db, ## data frame full data
+                            nvmax=max_nvars,
+                            method="forward") ## show all the model groups
+
+forward_model_names <- names(coef(bestsub_model_forward, id=which.min(mean.cv.errors_forward)[[1]]))
+```
+
+Backward Stepwise Selection: algoritmo que ajusta modelos que comienzan con la totalidad de los parámetros y va disminuyendolos progresivamente retirándo aquellos con p-valor más alto del modelo con k parámetros generado en la iteración anterior.
+
+```{r}
+set.seed(308873)
+
+k <- 5
+n <- nrow(db)
+folds <- sample(rep(1:k, length=n))
+cv.errors_backward <- matrix(NA, k, max_nvars, dimnames=list(NULL, paste(1:max_nvars)))
+
+for (j in 1:k) {
+  best_fit_backward <- regsubsets(forward_form, ## En este caso, la forma funcional es la misma de forward "forward_form".
+                                  data=db[folds != j, ],
+                                  nvmax=max_nvars, 
+                                  method="backward")  ## remember to use the method forward.
+
+  for (i in 1:max_nvars) {
+     pred <- predict(best_fit_backward, db[folds == j, ], id = i, forward_form) ## En este caso, la forma funcional es la misma de forward "forward_form".
+     cv.errors_backward[j, i] <- mean((db$totalHoursWorked[folds == j] - pred)^2)
+}
+}
+
+mean.cv.errors_backward <- apply(cv.errors_backward, 2, mean)
+mean.cv.errors_backward
+```
+
+```{r}
+which.min(mean.cv.errors_backward)[[1]]
+```
+
+```{r}
+bestsub_model_backward <- regsubsets(forward_form, ## formula
+                            data=db, ## data frame full data
+                            nvmax=max_nvars, ## show all the model groups
+                            method="backward") 
+
+backward_model_names <- names(coef(bestsub_model_backward, id=which.min(mean.cv.errors_backward)[[1]]))
+```
+
+Comparación entre los mejores modelos seleccionados usando Forward y Backward Stepwise Selection
+
+```{r}
+model_mat <-  model.matrix(forward_form, ## formula
+                        data = db)
+
+model_mat[,1] <- db$totalHoursWorked
+
+db2 <- as.data.frame(model_mat) %>% rename("totalHoursWorked" = "(Intercept)")
+
+backward_model_names[[1]] <- "totalHoursWorked"  
+forward_model_names[[1]] <- "totalHoursWorked"
+
+db2_forward <- db2 %>% select(all_of(forward_model_names))
+db2_backward <- db2 %>% select(all_of(backward_model_names))
+
+ctrl <- trainControl(
+  method = "cv", ## Define the method for cross validation 
+  number = 5) ## the number fof folds. 
+
+forward <- train(totalHoursWorked~.,  ## define the functional form (i.e the variable to predict and the features)
+                  data = db2_forward,  # the data frame
+                  method = 'lm',  # the method
+                  trControl= ctrl)  # input our cross validation method. 
+
+forward_score <- mean(forward$resample$RMSE)
+
+backward <- train(totalHoursWorked~.,  ## define the functional form (i.e the variable to predict and the features)
+                  data = db2_backward,  # the data frame
+                  method = 'lm',  # the method
+                  trControl= ctrl)  # input our cross validation method. 
+
+backward_score <- mean(backward$resample$RMSE)
+```
+
+```{r}
+scores<- data.frame(algorithm= c("Forward", "Backward"),
+                    score= c(forward_score,backward_score))
+
+scores
+```
