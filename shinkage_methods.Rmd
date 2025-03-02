@@ -1,0 +1,160 @@
+---
+title: "Shrinkage methods"
+output: null
+date: "2025-03-02"
+---
+
+```{r}
+require("pacman")
+p_load("tidyverse","stargazer", "glmnet", "caret")
+
+#nlsy <- read_csv('https://raw.githubusercontent.com/ignaciomsarmiento/datasets/main/nlsy97.csv')
+#nlsy <- nlsy  %>%   drop_na(educ) #drops NAs
+#saveRDS(nlsy, 'nlsy97.rds')
+
+nlsy <- readRDS('nlsy97.rds')
+```
+
+El uso de "glmnet" requiere la inclusión de argumentos en forma matricial
+
+```{r}
+y <- nlsy$lnw_2016
+
+# Matrix of predictors 
+Xsmall <- as.matrix(nlsy %>% select(educ, mom_educ))
+```
+
+Encogimiento de los betas a través del método de Ridge: $$
+\min_{\beta_0,\beta_1,\beta_2} \frac{1}{2n} \sum_{i=1}^{n} \left( log(wage)_i - \beta_0 -  \beta_1 Educ_i - \beta_2 MomEduc_i   \right) ^ 2 + \lambda \frac{1}{2} \left(\beta_1^2+ \beta_2^2 \right)
+$$
+* Los coeficientes se encogen luego de ser normalizados (MEDIA=0, VARIANZA=1) para que el parámetro lambda genere un efecto uniforme independientemente de la escala en la que se encuentren sus unidades. El argumento standardize por defecto es standardize=TRUE.
+```{r}
+ridge1 <- glmnet(
+  x = Xsmall,
+  y = y,
+  lambda=1,
+  alpha = 0 #ridge
+)
+
+coef(ridge1)
+```
+Al comparar el resultado del cálculo de coeficientes a través de ridge con lambda = 1 y OLS, el valor de los coeficientes es menor para ridge.
+```{r}
+stargazer(lm(y~Xsmall),type="text")
+```
+glmnet permite calcular el valor de los coeficientes usando múltiples valores de lambda, cuando no se especifica ese argumento en la función. 
+En la gráfica es posible apreciar el valor que van tomando los coeficientes a medida que aumenta el valor de lambda (ln lambda).
+```{r}
+ridge2 <- glmnet(
+  x = Xsmall,
+  y = y,
+  alpha = 0 #ridge
+)
+
+plot(ridge2, xvar = "lambda")
+```
+Uso de glmnet con todos los predicotores de la base de datos.
+```{r}
+# Matrix of predictors (all but lnw_2016)
+X <- as.matrix(nlsy  %>% select(-lnw_2016))
+
+ridge_all <- glmnet(
+  x = X,
+  y = y,
+  alpha = 0 #ridge
+)
+
+plot(ridge_all, xvar = "lambda")
+```
+Selección del valor de lambda que minimiza el MSE usando K-fold CV usando cv.glmnet.
+```{r}
+# Se fija una secuencia de lambdas.
+lambda_seq <- exp(seq(4, -2, length = 100))
+lambda_seq
+```
+```{r}
+folds <- sample(rep(1:5, length.out = length(y)))  # Assign randomly 1-5 to each observation.
+
+cv_ridge <- cv.glmnet(
+  X, 
+  y, 
+  alpha = 0, 
+  lambda = lambda_seq, 
+  foldid = folds)
+
+# Optimal lambda from cv.glmnet (lambda.min)
+lambda_opt_glmnet <- cv_ridge$lambda.min
+print(lambda_opt_glmnet)
+```
+cv.glmnet calcula el modelo con el lambda que minimiza el MSE, pero también sugiere el lambada ubicado a una desviación estándar a la derecha del minimo (lambda.1se). En algunos caso se ha considerado que el poder predictivo fuera de muestra aumenta con mayor encogimiento o regularización de los coeficientes. 
+```{r}
+plot(cv_ridge)
+
+lambda_opt_glmnet <- cv_ridge$lambda.1se
+lambda_opt_glmnet
+```
+Encogimiento de los betas a través del método de Lasso: 
+$$
+\frac{1}{2n}\sum_{i=1}^{n} \left( y_i - \beta_0 - \sum_{j=1}^{p} \beta_j x_{ij}    \right) ^ 2 + \lambda \sum_{j=1}^{p} |\beta_j|
+$$
+```{r}
+lasso01 <- glmnet(
+  x = X,
+  y = y,
+  alpha = 1 #lasso
+)
+
+plot(lasso01, xvar='lambda')
+```
+Elastic Net, es la combinación de Ridge y de Lasso en proporciones de cada uno que suman 1 (argumento alpha en la función):
+$$
+\frac{1}{2n}\sum_{i=1}^{n} \left( y_i - \beta_0 - \sum_{j=1}^{p} \beta_j x_{ij}    \right) ^ 2 + \lambda\left[(1-\alpha)\frac{1}{2}\|\beta\|_2^2 + \alpha \|\beta\|_1\right],
+$$
+```{r}
+# Define alpha grid (e.g., from 0 to 1 in steps of 0.2) #just to be fast, in practice, need a finer grid
+alpha_grid <- seq(0, 1, by = 0.2)
+
+# Initialize storage for results
+cv_results <- data.frame(alpha = numeric(), lambda = numeric(), mse = numeric())
+
+# Perform bidimensional cross-validation
+for (alpha_value in alpha_grid) {
+  # Perform cross-validation for each alpha
+  cv_fit <- cv.glmnet(
+    X, 
+    y, 
+    alpha = alpha_value, 
+    lambda = lambda_seq, 
+    foldid = folds
+    ) #note we are using the same folds and lambda sequences as before
+    
+  # Store best lambda and corresponding MSE
+  best_lambda <- cv_fit$lambda.min
+  best_mse <- min(cv_fit$cvm)  # Mean CV error
+  
+  # Append results
+  cv_results <- rbind(cv_results, data.frame(alpha = alpha_value, lambda = best_lambda, mse = best_mse))
+}
+
+cv_results
+```
+Identificación de las variables relevantes con su respectivo coeficiente
+```{r}
+best_model <- cv_results[which.min(cv_results$mse), ]
+final_model <- glmnet(X, y, alpha = best_model$alpha, lambda = best_model$lambda)
+
+vars <- length(coef(final_model)@Dimnames[[1]])
+relevant_vars <- c()
+
+for (i in 1:vars) {
+  value <- coef(final_model)[i, 1]
+  if (value != 0) {
+    name <- coef(final_model)@Dimnames[[1]][i]
+    name_value <- c(name, value)
+    relevant_vars <- c(relevant_vars, name_value)
+  }
+}
+
+print(relevant_vars)
+```
+
