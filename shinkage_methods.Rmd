@@ -6,7 +6,9 @@ date: "2025-03-02"
 
 ```{r}
 require("pacman")
-p_load("tidyverse","stargazer", "glmnet", "caret")
+p_load("tidyverse","stargazer", "glmnet", "caret", "rio")
+
+# Visualización de método de inclusión de observaciones de Ridge y de Lasso para bases de datos con k > n: https://cede.uniandes.edu.co/RidgeDataAug/
 
 #nlsy <- read_csv('https://raw.githubusercontent.com/ignaciomsarmiento/datasets/main/nlsy97.csv')
 #nlsy <- nlsy  %>%   drop_na(educ) #drops NAs
@@ -26,8 +28,8 @@ Xsmall <- as.matrix(nlsy %>% select(educ, mom_educ))
 
 Encogimiento de los betas a través del método de Ridge: $$
 \min_{\beta_0,\beta_1,\beta_2} \frac{1}{2n} \sum_{i=1}^{n} \left( log(wage)_i - \beta_0 -  \beta_1 Educ_i - \beta_2 MomEduc_i   \right) ^ 2 + \lambda \frac{1}{2} \left(\beta_1^2+ \beta_2^2 \right)
-$$
-* Los coeficientes se encogen luego de ser normalizados (MEDIA=0, VARIANZA=1) para que el parámetro lambda genere un efecto uniforme independientemente de la escala en la que se encuentren sus unidades. El argumento standardize por defecto es standardize=TRUE.
+$$ \* Los coeficientes se encogen luego de ser normalizados (MEDIA=0, VARIANZA=1) para que el parámetro lambda genere un efecto uniforme independientemente de la escala en la que se encuentren sus unidades. El argumento standardize por defecto es standardize=TRUE.
+
 ```{r}
 ridge1 <- glmnet(
   x = Xsmall,
@@ -38,12 +40,15 @@ ridge1 <- glmnet(
 
 coef(ridge1)
 ```
+
 Al comparar el resultado del cálculo de coeficientes a través de ridge con lambda = 1 y OLS, el valor de los coeficientes es menor para ridge.
+
 ```{r}
 stargazer(lm(y~Xsmall),type="text")
 ```
-glmnet permite calcular el valor de los coeficientes usando múltiples valores de lambda, cuando no se especifica ese argumento en la función. 
-En la gráfica es posible apreciar el valor que van tomando los coeficientes a medida que aumenta el valor de lambda (ln lambda).
+
+glmnet permite calcular el valor de los coeficientes usando múltiples valores de lambda, cuando no se especifica ese argumento en la función. En la gráfica es posible apreciar el valor que van tomando los coeficientes a medida que aumenta el valor de lambda (ln lambda).
+
 ```{r}
 ridge2 <- glmnet(
   x = Xsmall,
@@ -53,7 +58,9 @@ ridge2 <- glmnet(
 
 plot(ridge2, xvar = "lambda")
 ```
+
 Uso de glmnet con todos los predicotores de la base de datos.
+
 ```{r}
 # Matrix of predictors (all but lnw_2016)
 X <- as.matrix(nlsy  %>% select(-lnw_2016))
@@ -66,12 +73,15 @@ ridge_all <- glmnet(
 
 plot(ridge_all, xvar = "lambda")
 ```
+
 Selección del valor de lambda que minimiza el MSE usando K-fold CV usando cv.glmnet.
+
 ```{r}
 # Se fija una secuencia de lambdas.
 lambda_seq <- exp(seq(4, -2, length = 100))
 lambda_seq
 ```
+
 ```{r}
 folds <- sample(rep(1:5, length.out = length(y)))  # Assign randomly 1-5 to each observation.
 
@@ -86,17 +96,23 @@ cv_ridge <- cv.glmnet(
 lambda_opt_glmnet <- cv_ridge$lambda.min
 print(lambda_opt_glmnet)
 ```
-cv.glmnet calcula el modelo con el lambda que minimiza el MSE, pero también sugiere el lambada ubicado a una desviación estándar a la derecha del minimo (lambda.1se). En algunos caso se ha considerado que el poder predictivo fuera de muestra aumenta con mayor encogimiento o regularización de los coeficientes. 
+
+cv.glmnet calcula el modelo con el lambda que minimiza el MSE, pero también sugiere el lambada ubicado a una desviación estándar a la derecha del minimo (lambda.1se). En algunos caso se ha considerado que el poder predictivo fuera de muestra aumenta con mayor encogimiento o regularización de los coeficientes.
+
 ```{r}
 plot(cv_ridge)
 
 lambda_opt_glmnet <- cv_ridge$lambda.1se
 lambda_opt_glmnet
 ```
+
 Encogimiento de los betas a través del método de Lasso: 
 $$
-\frac{1}{2n}\sum_{i=1}^{n} \left( y_i - \beta_0 - \sum_{j=1}^{p} \beta_j x_{ij}    \right) ^ 2 + \lambda \sum_{j=1}^{p} |\beta_j|
+\displaystyle
+\frac{1}{2n} \sum_{i=1}^{n} \left( y_i - \beta_0 - \sum_{j=1}^{p} \beta_j x_{ij} \right)^2 
++ \lambda \sum_{j=1}^{p} |\beta_j|
 $$
+
 ```{r}
 lasso01 <- glmnet(
   x = X,
@@ -106,10 +122,11 @@ lasso01 <- glmnet(
 
 plot(lasso01, xvar='lambda')
 ```
-Elastic Net, es la combinación de Ridge y de Lasso en proporciones de cada uno que suman 1 (argumento alpha en la función):
+Elastic Net, es la combinación de Ridge y de Lasso en proporciones de cada uno que suman 1 (argumento alpha en la función): 
 $$
 \frac{1}{2n}\sum_{i=1}^{n} \left( y_i - \beta_0 - \sum_{j=1}^{p} \beta_j x_{ij}    \right) ^ 2 + \lambda\left[(1-\alpha)\frac{1}{2}\|\beta\|_2^2 + \alpha \|\beta\|_1\right],
 $$
+
 ```{r}
 # Define alpha grid (e.g., from 0 to 1 in steps of 0.2) #just to be fast, in practice, need a finer grid
 alpha_grid <- seq(0, 1, by = 0.2)
@@ -138,7 +155,9 @@ for (alpha_value in alpha_grid) {
 
 cv_results
 ```
+
 Identificación de las variables relevantes con su respectivo coeficiente
+
 ```{r}
 best_model <- cv_results[which.min(cv_results$mse), ]
 final_model <- glmnet(X, y, alpha = best_model$alpha, lambda = best_model$lambda)
@@ -157,4 +176,99 @@ for (i in 1:vars) {
 
 print(relevant_vars)
 ```
+Aplicación de Ridge usando caret.
+```{r}
+db <- import("https://github.com/ignaciomsarmiento/datasets/blob/main/GEIH_sample1_clean.Rds?raw=true")
 
+model_form<-  totalHoursWorked ~
+  log_ingtot +
+  poly(age,3,raw=TRUE) +
+  female + 
+  poly(age,3,raw=TRUE):female +
+  maxEducLevel + 
+  poly(age,3,raw=TRUE):maxEducLevel +
+  nmenores + 
+  poly(age,3,raw=TRUE):nmenores +
+  H_Head +  
+  poly(age,3,raw=TRUE):H_Head +
+  H_Head*female +  
+  poly(age,3,raw=TRUE):H_Head*female
+
+
+set.seed(308873)  
+
+fitControl <- trainControl( 
+  method = "cv",
+  number = 10) ##  10 fold CV
+
+lambda_seq <- 100 * seq(1,.505,-.005)^14
+
+ridge <- train(
+  model_form,
+  data=db,
+  method = 'glmnet', 
+  trControl = fitControl,
+  tuneGrid = expand.grid(alpha = 0,
+                         lambda = lambda_seq)
+  ) 
+# Identificación del MSE calculado más pequeño
+ridge_MSE <- min(ridge$results$RMSE)
+ridge_MSE
+
+# Valor de los coeficientes del modelo con menor MSE
+coef_ridge <- coef(ridge$finalModel, ridge$bestTune$lambda)
+coef_ridge
+```
+Aplicación de Lasso usando Caret
+```{r}
+lasso <- train(
+  model_form,
+  data=db,
+  method = 'glmnet', 
+  trControl = fitControl,
+  tuneGrid = expand.grid(alpha = 1,
+                         lambda = lambda_seq)
+  ) 
+# Identificación del MSE calculado más pequeño
+lasso_MSE <- min(lasso$results$RMSE)
+lasso_MSE
+
+# Valor de los coeficientes del modelo con menor MSE
+coef_lasso <- coef(lasso$finalModel, lasso$bestTune$lambda)
+coef_lasso
+```
+Aplicación de Elastic Net usando Caret
+```{r}
+tuneGrid<- expand.grid(
+  alpha = seq(0,1, 0.05), # between 0 and 1. 
+  lambda = seq(0.5, 1.5, 0.5))
+
+enet <- train(
+  model_form,
+  data=db,
+  method = 'glmnet', 
+  trControl = fitControl,
+  tuneGrid = tuneGrid
+  ) 
+
+# Identificación del MSE calculado más pequeño
+enet_MSE <- min(enet$results$RMSE)
+enet_MSE
+
+# Valor de los coeficientes del modelo con menor MSE
+coef_enet <- coef(enet$finalModel, enet$bestTune$lambda)
+coef_enet
+```
+```{r}
+ggplot(enet$results,  # Keep all results for plotting
+  aes(x=lambda, y=RMSE, color=factor(alpha))) +
+  geom_line() +
+  geom_point(size=2, alpha=0.5) +
+  scale_color_viridis_d(name="Mixing Percentage (α)",
+                        breaks = seq(0, 1, 0.1)) + # Only show multiples of 0.1 in legend
+  labs(x="Penalty (λ)", 
+  y="Root Mean Squared Error",
+  title="Elastic Net Performance Across Different Parameter Values") +
+  theme_minimal() +
+  theme(legend.position="right")
+```

@@ -1,0 +1,112 @@
+---
+title: "classification_methods"
+output: null
+date: "2025-03-14"
+---
+
+```{r}
+library(pacman)
+
+p_load(rio, # import/export data
+       tidyverse, # tidy-data
+       glmnet, # To implement regularization algorithms. 
+       caret, # Creating predictive models
+       #scatterplot3d, # For 3D visualization
+       plotly # For interactive 3D plots
+      )
+```
+```{r}
+credit <- readRDS(url("https://github.com/ignaciomsarmiento/datasets/blob/main/credit_class.rds?raw=true"))
+
+credit<-droplevels(credit) #drop unused levels
+
+credit<- credit %>% 
+  mutate(Default = factor(
+    Default,
+    levels=c(0,1), # 0 is the reference category
+    labels=c("No","Yes")
+    ))
+```
+Uso de Logit para estimar probabilidades
+```{r}
+mylogit <- glm(Default~., data = credit, family = "binomial")
+summary(mylogit,type="text")
+```
+```{r}
+credit <- credit %>% 
+  mutate(prob_hat=predict(mylogit,
+                          newdata = credit, 
+                          type = "response"), #type = "response" gives the predicted probabilities.
+         prob_logodds = predict(mylogit,
+                          newdata = credit, 
+                          type = "link"), #type = "link" gives the predicted log-odds.
+         prob2 = predict(mylogit,
+                         newdata = credit,
+                         type = NULL) #type = NULL gives the predicted log-odds.
+         ) 
+
+head(credit %>% select(Default, prob_hat, prob_logodds, prob2))
+```
+Clasificación de los valores predichos.
+```{r}
+rule <- 0.3 # Bayes Rule (0.5), but this threshold may vary.
+
+credit <- credit %>% mutate(Default_hat = ifelse(prob_hat > rule, 'Yes', 'No'))    ## predicted class labels
+
+head(credit  %>% select(Default, Default_hat, prob_hat), 10)
+```
+Conteo de clasificaciones correctas
+```{r}
+with(credit, table(Default_hat, Default))
+```
+classProbs = TRUE: This argument indicates that class probabilities should be saved for each prediction. This is particularly useful for classification models where, besides predicting the class label, you are also interested in the probabilities of each class. This can be important if we want to choose a different prediction rule, i.e. a different threshold than the 0.5 (Bayes rule) we used before.
+
+savePredictions = TRUE: This argument specifies that predictions on the validation set should be saved. Setting it to TRUE enables the saving of predictions. This can be useful for analyzing the model’s performance in detail after the training process is complete.
+```{r}
+ctrl <- trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,
+  savePredictions = TRUE
+  )
+
+set.seed(1410)
+
+default_logit <- train(
+  Default~. ,
+  data = credit, 
+  method = "glm",
+  family = "binomial",
+  trControl = ctrl
+  )
+
+default_logit
+```
+```{r}
+default_logit$resample
+
+logit_accuracy <- default_logit$results$Accuracy
+```
+```{r}
+predict_logit <- data.frame(
+  Default = credit$Default, ## observed class labels
+  pred = predict(default_logit, newdata = credit, type = "raw"), ## predicted class labels with Bayes rule
+  P_hat = predict(default_logit, newdata = credit, type = "prob") ## predicted class probabilities
+)
+
+head(predict_logit)
+```
+```{r}
+ggplot(predict_logit, aes(x = P_hat.Yes, fill = Default)) +
+  geom_density(alpha = 0.5) + 
+  labs(title = "Probability by Default Status",
+       x = "Valor",
+       y = "Densidad") +
+  scale_fill_manual(values = c("blue", "red"), # colors for default equal to 0 and 1
+                    labels = c("Default = No", "Default = Yes")) + 
+  theme_minimal()
+```
+K nearest neighbors (KNN)
+```{r}
+
+```
