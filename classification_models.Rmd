@@ -49,11 +49,16 @@ head(credit %>% select(Default, prob_hat, prob_logodds, prob2))
 ```
 Clasificación de los valores predichos.
 ```{r}
-rule <- 0.3 # Bayes Rule (0.5), but this threshold may vary.
+rule <- 0.2 # Bayes Rule (0.5), but this threshold may vary.
 
 credit <- credit %>% mutate(Default_hat = ifelse(prob_hat > rule, 'Yes', 'No'))    ## predicted class labels
 
 head(credit  %>% select(Default, Default_hat, prob_hat), 10)
+```
+
+
+```{r}
+credit %>% filter(Default=='No', Default_hat==Default) %>% count()
 ```
 Conteo de clasificaciones correctas
 ```{r}
@@ -107,6 +112,51 @@ ggplot(predict_logit, aes(x = P_hat.Yes, fill = Default)) +
   theme_minimal()
 ```
 K nearest neighbors (KNN)
+A medida que aumenta la cantidad de parámetros, la precisión del método disminuye.
 ```{r}
+set.seed(1410)
+default_knn <- train(
+  Default~., 
+  data = credit, 
+  method = "knn",  
+  tuneGrid = expand.grid(k=seq(15,39,by=3)), # search over the grid
+  trControl = ctrl)
 
+default_knn
+```
+```{r}
+knn_accuracy <- max(default_knn$results$Accuracy)
+
+default_knn$bestTune$k
+```
+LDA: linear discriminant analysis asume la distribución normal de las variables X.
+```{r}
+default_lda = train(Default~., 
+                data=credit, 
+                method="lda", # selección del método LDA
+                trControl = ctrl)
+
+default_lda
+```
+```{r}
+lda_accuracy <- default_lda$results$Accuracy
+```
+QDA: quadratic discriminant analysis asume la distribución normal de las X, pero cada una con su propia matriz de covarianza.
+```{r}
+default_qda = train(Default~., 
+                data=credit[,-c(10:13)], 
+                method="qda",  # selección del método QDA
+                trControl = ctrl)
+
+default_qda
+```
+```{r}
+qda_accuracy <- default_qda$results$Accuracy
+```
+```{r}
+scores<- data.frame( 
+                    algorithm= c("Logit", "KNN", "LDA", "QDA"),
+                    score= c(logit_accuracy, knn_accuracy, lda_accuracy, qda_accuracy)
+                    )
+scores
 ```
